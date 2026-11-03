@@ -90,26 +90,47 @@ export default async function handler(req, res) {
       setTimeout(() => resolve(null), 12000);
     });
 
-    // Navigate to IRD pan search page
-    await page.goto('https://ird.gov.np/pan-search/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 25000
-    });
+    // Safe navigation with retry for transient frame shifts
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await page.goto('https://ird.gov.np/pan-search/', {
+          waitUntil: 'domcontentloaded',
+          timeout: 25000
+        });
+        break;
+      } catch (err) {
+        if (err.message && err.message.includes('detached') && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1200));
+          continue;
+        }
+        throw err;
+      }
+    }
 
-    // Wait for the PAN input to be ready
-    await page.waitForSelector('#pan', { timeout: 10000 });
+    // Wait for the PAN input to be ready in DOM
+    await page.waitForSelector('#pan', { timeout: 12000 });
 
-    // Populate PAN and trigger input event
+    // Wait for Google invisible reCAPTCHA script to finish loading
+    await page
+      .waitForFunction(() => typeof window.grecaptcha !== 'undefined', { timeout: 8000 })
+      .catch(() => {});
+
+    // Populate PAN and trigger grecaptcha directly without causing native form submission
     await page.evaluate((panNum) => {
       const el = document.getElementById('pan');
       if (el) {
         el.value = panNum;
         el.dispatchEvent(new Event('input', { bubbles: true }));
       }
+      if (typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.execute === 'function') {
+        window.grecaptcha.execute();
+      } else if (typeof window.taxSearch === 'function') {
+        window.taxSearch({ preventDefault: () => {} });
+      } else {
+        const btn = document.getElementById('submit');
+        if (btn) btn.click();
+      }
     }, pan);
-
-    // Click the submit button to execute invisible reCAPTCHA and fire AJAX fetch
-    await page.click('#submit');
 
     // Wait for the IRD getPanSearch response
     const json = await responsePromise;
