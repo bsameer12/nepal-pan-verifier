@@ -107,6 +107,13 @@ export default async function handler(req, res) {
 
     // Poll until grecaptcha and taxSearch are loaded in the page, then execute
     let evalStatus = { ready: false };
+    let pageTitle = '';
+    let pageUrl = '';
+    try {
+      pageTitle = await page.title();
+      pageUrl = page.url();
+    } catch (e) {}
+
     for (let i = 0; i < 12; i++) {
       try {
         evalStatus = await page.evaluate((panNum) => {
@@ -125,7 +132,9 @@ export default async function handler(req, res) {
         }, pan);
 
         if (evalStatus?.ready) break;
-      } catch (evalErr) {}
+      } catch (evalErr) {
+        evalStatus = { ready: false, error: evalErr.message };
+      }
 
       await new Promise((r) => setTimeout(r, 1000));
     }
@@ -150,6 +159,8 @@ export default async function handler(req, res) {
       return res.status(404).json({
         success: false,
         pan: pan,
+        pageTitle: pageTitle,
+        pageUrl: pageUrl,
         evalStatus: evalStatus,
         message: 'Taxpayer record not found or unverified on IRD portal'
       });
