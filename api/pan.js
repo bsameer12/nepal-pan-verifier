@@ -81,119 +81,58 @@ export default async function handler(req, res) {
       process.env.LD_LIBRARY_PATH = [al2023Lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
     }
 
-    if (!cachedBrowser || !cachedBrowser.connected) {
-      cachedBrowser = await puppeteer.launch({
-        args: [
-          ...chromium.args,
-          '--hide-scrollbars',
-          '--disable-web-security',
-          '--no-sandbox',
-          '--disable-gpu',
-          '--disable-dev-shm-usage',
-          '--disable-setuid-sandbox'
-        ],
-        defaultViewport: chromium.defaultViewport,
-        executablePath: executablePath,
-        headless: chromium.headless
-      });
-    }
+    browser = await puppeteer.launch({
+      args: [
+        ...chromium.args,
+        '--hide-scrollbars',
+        '--disable-web-security',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--disable-setuid-sandbox'
+      ],
+      defaultViewport: chromium.defaultViewport,
+      executablePath: executablePath,
+      headless: chromium.headless
+    });
     marks.browserReady = Date.now() - t0;
 
-    page = await cachedBrowser.newPage();
+    const page = await browser.newPage();
     await page.setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
     );
 
-    // Abort heavy media, images, and fonts for instant loading (<1s)
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      const type = req.resourceType();
-      if (['image', 'media', 'font'].includes(type)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
-
     let irdData = null;
-    const responsePromise = new Promise((resolve) => {
-      page.on('response', async (response) => {
-        try {
-          if (response.url().includes('/api/getPanSearch/')) {
-            const json = await response.json();
-            resolve(json);
+    page.on('response', async (response) => {
+      try {
+        if (response.url().includes('/api/getPanSearch/')) {
+          const json = await response.json();
+          if (json && (json.code === 1 || json.data)) {
+            irdData = json.data || json;
           }
-        } catch (e) {}
-      });
-      setTimeout(() => resolve(null), 6000);
+        }
+      } catch (e) {}
     });
 
-    // Navigate to IRD (blazing fast with blocked assets)
-    try {
-      await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
-        waitUntil: 'domcontentloaded',
-        timeout: 8000
-      });
-    } catch (e) {}
+    // Navigate to IRD pan search page
+    await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
+      waitUntil: 'networkidle2',
+      timeout: 18000
+    });
     marks.pageNavigated = Date.now() - t0;
 
-    // Allow in-page scripts and history.replaceState to settle
-    await new Promise((r) => setTimeout(r, 1200));
+    if (!irdData) {
+      await page.waitForSelector('#submit', { timeout: 4000 }).catch(() => {});
+      await page.click('#submit').catch(() => {});
+      marks.submitClicked = Date.now() - t0;
 
-    // Safely evaluate on active main frame across potential frame transitions
-    let searchStatus = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      try {
-        const frame = page.mainFrame();
-        if (frame && !frame.isDetached()) {
-          searchStatus = await frame.evaluate((panNum) => {
-            const el = document.getElementById('pan');
-            const btn = document.getElementById('submit');
-            const hasGrecaptcha = typeof window.grecaptcha !== 'undefined';
-            const hasTaxSearch = typeof window.taxSearch === 'function';
-
-            if (el) el.value = panNum;
-
-            let submitted = false;
-            if (hasTaxSearch) {
-              window.taxSearch({ preventDefault: () => {} });
-              submitted = true;
-            } else if (hasGrecaptcha && typeof window.grecaptcha.execute === 'function') {
-              window.grecaptcha.execute();
-              submitted = true;
-            } else if (btn) {
-              btn.click();
-              submitted = true;
-            }
-
-            return {
-              submitted,
-              hasPan: !!el,
-              hasBtn: !!btn,
-              hasGrecaptcha,
-              hasTaxSearch,
-              url: window.location.href,
-              htmlLen: document.body?.innerHTML?.length || 0
-            };
-          }, pan);
-
-          if (searchStatus?.submitted) break;
-        }
-      } catch (frameErr) {
-        searchStatus = { error: frameErr.message };
-      }
-      await new Promise((r) => setTimeout(r, 600));
-    }
-    marks.searchTriggered = Date.now() - t0;
-    marks.searchStatus = searchStatus;
-
-    const json = await responsePromise;
-    if (json && (json.code === 1 || json.data)) {
-      irdData = json.data || json;
+      await page
+        .waitForResponse((res) => res.url().includes('/api/getPanSearch/'), { timeout: 6000 })
+        .catch(() => {});
     }
 
-    await page.close();
-    page = null;
+    await browser.close();
+    browser = null;
 
     if (irdData) {
       return res.status(200).json({
@@ -212,9 +151,9 @@ export default async function handler(req, res) {
       });
     }
   } catch (error) {
-    if (page) {
+    if (browser) {
       try {
-        await page.close();
+        await browser.close();
       } catch (e) {}
     }
     return res.status(500).json({
