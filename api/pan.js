@@ -63,7 +63,7 @@ export default async function handler(req, res) {
   const t0 = Date.now();
   const marks = {};
 
-  let page = null;
+  let browser = null;
   try {
     const fs = await import('node:fs');
     if (fs.existsSync('/tmp/chromium') && !fs.existsSync('/tmp/al2023/lib/libnss3.so')) {
