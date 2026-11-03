@@ -1,6 +1,6 @@
 {
   "name": "nepal-pan-verifier",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Serverless API to verify Nepalese PAN details directly from IRD Nepal (ird.gov.np)",
   "main": "api/pan.js",
   "type": "module",
@@ -8,8 +8,8 @@
     "start": "node api/pan.js"
   },
   "dependencies": {
-    "@sparticuz/chromium-min": "123.0.1",
-    "puppeteer-core": "22.6.0"
+    "@sparticuz/chromium": "131.0.1",
+    "puppeteer-core": "23.10.4"
   },
   "keywords": [
     "nepal",
