@@ -141,42 +141,51 @@ export default async function handler(req, res) {
     await new Promise((r) => setTimeout(r, 1200));
 
     // Safely evaluate on active main frame across potential frame transitions
-    let searchSubmitted = false;
+    let searchStatus = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
         const frame = page.mainFrame();
         if (frame && !frame.isDetached()) {
-          searchSubmitted = await frame.evaluate((panNum) => {
+          searchStatus = await frame.evaluate((panNum) => {
             const el = document.getElementById('pan');
-            if (!el) return false;
-            el.value = panNum;
-
-            if (typeof window.grecaptcha !== 'undefined') {
-              if (typeof window.taxSearch === 'function') {
-                window.taxSearch({ preventDefault: () => {} });
-                return true;
-              } else if (typeof window.grecaptcha.execute === 'function') {
-                window.grecaptcha.execute();
-                return true;
-              }
-            }
             const btn = document.getElementById('submit');
-            if (btn) {
+            const hasGrecaptcha = typeof window.grecaptcha !== 'undefined';
+            const hasTaxSearch = typeof window.taxSearch === 'function';
+
+            if (el) el.value = panNum;
+
+            let submitted = false;
+            if (hasTaxSearch) {
+              window.taxSearch({ preventDefault: () => {} });
+              submitted = true;
+            } else if (hasGrecaptcha && typeof window.grecaptcha.execute === 'function') {
+              window.grecaptcha.execute();
+              submitted = true;
+            } else if (btn) {
               btn.click();
-              return true;
+              submitted = true;
             }
-            return false;
+
+            return {
+              submitted,
+              hasPan: !!el,
+              hasBtn: !!btn,
+              hasGrecaptcha,
+              hasTaxSearch,
+              url: window.location.href,
+              htmlLen: document.body?.innerHTML?.length || 0
+            };
           }, pan);
 
-          if (searchSubmitted) break;
+          if (searchStatus?.submitted) break;
         }
       } catch (frameErr) {
-        // Absorbs transient frame detachment during initial execution
+        searchStatus = { error: frameErr.message };
       }
       await new Promise((r) => setTimeout(r, 600));
     }
     marks.searchTriggered = Date.now() - t0;
-    marks.searchSubmitted = searchSubmitted;
+    marks.searchStatus = searchStatus;
 
     const json = await responsePromise;
     if (json && (json.code === 1 || json.data)) {
