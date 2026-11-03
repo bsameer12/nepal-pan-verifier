@@ -22,6 +22,30 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
+  if (req.query?.test === '1') {
+    try {
+      const t0 = Date.now();
+      const resp = await fetch('https://ird.gov.np/pan-search/', {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+        },
+        signal: AbortSignal.timeout(6000)
+      });
+      const text = await resp.text();
+      return res.status(200).json({
+        timeMs: Date.now() - t0,
+        status: resp.status,
+        hasForm: text.includes('getPanSearch'),
+        length: text.length
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: e.message
+      });
+    }
+  }
+
   // Extract PAN from query or body
   const rawPan = req.query?.pan || req.body?.pan || '';
   const pan = String(rawPan).replace(/\D/g, '');
