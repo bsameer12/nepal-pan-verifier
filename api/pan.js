@@ -88,37 +88,47 @@ export default async function handler(req, res) {
           }
         }
       });
-      // Safety timeout after form submission
-      setTimeout(() => resolve(null), 15000);
+      // Generous timeout to allow reCAPTCHA and remote IRD API to respond
+      setTimeout(() => resolve(null), 20000);
     });
 
-    // Navigate with waitUntil: 'commit' so in-page history.replaceState does not detach the frame
+    // Navigate to IRD pan search with pan query parameter
     try {
       await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
-        waitUntil: 'commit',
+        waitUntil: 'domcontentloaded',
         timeout: 25000
       });
     } catch (e) {
       // Ignored: in-page history.replaceState or fast client redirects
     }
 
-    // Wait 3.5s for page scripts, CSRF token, and reCAPTCHA to settle
-    await new Promise((r) => setTimeout(r, 3500));
+    // Wait until #pan exists in the document
+    await page.waitForSelector('#pan', { timeout: 15000 }).catch(() => {});
 
-    // Trigger tax search
-    await page.evaluate((panNum) => {
-      const el = document.getElementById('pan');
-      if (el) el.value = panNum;
+    // Poll until grecaptcha and taxSearch are loaded in the page, then execute
+    let evalStatus = { ready: false };
+    for (let i = 0; i < 12; i++) {
+      try {
+        evalStatus = await page.evaluate((panNum) => {
+          const el = document.getElementById('pan');
+          if (el) el.value = panNum;
 
-      if (typeof window.taxSearch === 'function') {
-        window.taxSearch({ preventDefault: () => {} });
-      } else if (typeof window.grecaptcha !== 'undefined' && window.grecaptcha.execute) {
-        window.grecaptcha.execute();
-      } else {
-        const btn = document.getElementById('submit');
-        if (btn) btn.click();
-      }
-    }, pan);
+          const hasTaxSearch = typeof window.taxSearch === 'function';
+          const hasGrecaptcha =
+            typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.execute === 'function';
+
+          if (hasTaxSearch && hasGrecaptcha) {
+            window.taxSearch({ preventDefault: () => {} });
+            return { ready: true, hasTaxSearch, hasGrecaptcha, panVal: el?.value };
+          }
+          return { ready: false, hasTaxSearch, hasGrecaptcha, panVal: el?.value };
+        }, pan);
+
+        if (evalStatus?.ready) break;
+      } catch (evalErr) {}
+
+      await new Promise((r) => setTimeout(r, 1000));
+    }
 
     // Wait for the IRD getPanSearch response
     const json = await responsePromise;
@@ -140,6 +150,7 @@ export default async function handler(req, res) {
       return res.status(404).json({
         success: false,
         pan: pan,
+        evalStatus: evalStatus,
         message: 'Taxpayer record not found or unverified on IRD portal'
       });
     }
