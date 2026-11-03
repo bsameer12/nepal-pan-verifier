@@ -54,7 +54,14 @@ export default async function handler(req, res) {
     }
 
     browser = await puppeteer.launch({
-      args: [...chromium.args, '--hide-scrollbars', '--disable-web-security', '--no-sandbox'],
+      args: [
+        ...chromium.args,
+        '--hide-scrollbars',
+        '--disable-web-security',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-setuid-sandbox'
+      ],
       defaultViewport: chromium.defaultViewport,
       executablePath: executablePath,
       headless: chromium.headless
@@ -65,33 +72,53 @@ export default async function handler(req, res) {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
     );
 
+    // Setup listener for official IRD API response
     let irdData = null;
-
-    // Intercept network response from official IRD API
-    page.on('response', async (response) => {
-      const url = response.url();
-      if (url.includes('/api/getPanSearch/')) {
-        try {
-          const json = await response.json();
-          if (json && (json.code === 1 || json.data)) {
-            irdData = json.data;
+    const responsePromise = new Promise((resolve) => {
+      page.on('response', async (response) => {
+        const url = response.url();
+        if (url.includes('/api/getPanSearch/')) {
+          try {
+            const json = await response.json();
+            resolve(json);
+          } catch (e) {
+            resolve(null);
           }
-        } catch (e) {
-          // ignore parsing error
         }
+      });
+      // Safety timeout after form submission
+      setTimeout(() => resolve(null), 12000);
+    });
+
+    // Navigate to IRD pan search page
+    await page.goto('https://ird.gov.np/pan-search/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 25000
+    });
+
+    // Wait for the PAN input to be ready
+    await page.waitForSelector('#pan', { timeout: 10000 });
+
+    // Populate PAN and trigger input event
+    await page.evaluate((panNum) => {
+      const el = document.getElementById('pan');
+      if (el) {
+        el.value = panNum;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
       }
-    });
+    }, pan);
 
-    // Navigate to IRD (invisible reCAPTCHA executes naturally in the real browser session)
-    await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
-      waitUntil: 'networkidle2',
-      timeout: 18000
-    });
+    // Click the submit button to execute invisible reCAPTCHA and fire AJAX fetch
+    await page.click('#submit');
 
-    // Short wait to ensure async network intercept completes
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // Wait for the IRD getPanSearch response
+    const json = await responsePromise;
+    if (json && (json.code === 1 || json.data)) {
+      irdData = json.data || json;
+    }
 
     await browser.close();
+    browser = null;
 
     if (irdData) {
       return res.status(200).json({
