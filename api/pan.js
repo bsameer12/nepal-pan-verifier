@@ -102,6 +102,14 @@ export default async function handler(req, res) {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
     );
 
+    // Neutralize history.replaceState to prevent Puppeteer frame detachment
+    await page.evaluateOnNewDocument(() => {
+      try {
+        history.replaceState = () => {};
+        history.pushState = () => {};
+      } catch (e) {}
+    });
+
     let irdData = null;
     page.on('response', async (response) => {
       try {
@@ -116,18 +124,31 @@ export default async function handler(req, res) {
 
     // Navigate to IRD pan search page
     await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
-      waitUntil: 'networkidle2',
-      timeout: 18000
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
     });
     marks.pageNavigated = Date.now() - t0;
 
-    if (!irdData) {
-      await page.waitForSelector('#submit', { timeout: 4000 }).catch(() => {});
-      await page.click('#submit').catch(() => {});
-      marks.submitClicked = Date.now() - t0;
+    // Wait for the form input to be ready
+    await page.waitForSelector('#pan', { timeout: 8000 });
 
+    // Populate PAN value
+    await page.evaluate((panNum) => {
+      const el = document.getElementById('pan');
+      if (el) {
+        el.value = panNum;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, pan);
+
+    // Click search button
+    await page.click('#submit');
+    marks.submitClicked = Date.now() - t0;
+
+    // Await IRD API response
+    if (!irdData) {
       await page
-        .waitForResponse((res) => res.url().includes('/api/getPanSearch/'), { timeout: 6000 })
+        .waitForResponse((res) => res.url().includes('/api/getPanSearch/'), { timeout: 8000 })
         .catch(() => {});
     }
 
