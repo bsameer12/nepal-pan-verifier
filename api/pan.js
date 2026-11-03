@@ -137,36 +137,37 @@ export default async function handler(req, res) {
     } catch (e) {}
     marks.pageNavigated = Date.now() - t0;
 
-    // Poll up to 4s for grecaptcha and taxSearch to be available, then execute
-    let evaluateSuccess = false;
-    for (let i = 0; i < 8; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      try {
-        const isReady = await page.evaluate((panNum) => {
-          const el = document.getElementById('pan');
-          if (el) el.value = panNum;
+    // Wait for #pan to be ready in DOM
+    await page.waitForSelector('#pan', { timeout: 6000 }).catch(() => {});
 
-          const hasTaxSearch = typeof window.taxSearch === 'function';
-          const hasGrecaptcha =
-            typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.execute === 'function';
-
-          if (hasTaxSearch && hasGrecaptcha) {
-            window.taxSearch({ preventDefault: () => {} });
-            return true;
-          }
-          return false;
-        }, pan);
-
-        if (isReady) {
-          evaluateSuccess = true;
-          break;
-        }
-      } catch (evalErr) {
-        // Absorbs transient frame detachment during in-page history.replaceState or script load
+    // Ensure #pan has the PAN value
+    await page.evaluate((panNum) => {
+      const el = document.getElementById('pan');
+      if (el) {
+        el.value = panNum;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
       }
-    }
-    marks.evaluateTriggered = Date.now() - t0;
-    marks.evaluateSuccess = evaluateSuccess;
+    }, pan);
+
+    // Trigger tax search via grecaptcha.ready or direct submit click
+    await page.evaluate(() => {
+      if (typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.ready === 'function') {
+        window.grecaptcha.ready(() => {
+          if (typeof window.taxSearch === 'function') {
+            window.taxSearch({ preventDefault: () => {} });
+          } else if (typeof window.grecaptcha.execute === 'function') {
+            window.grecaptcha.execute();
+          } else {
+            document.getElementById('submit')?.click();
+          }
+        });
+      } else if (typeof window.taxSearch === 'function') {
+        window.taxSearch({ preventDefault: () => {} });
+      } else {
+        document.getElementById('submit')?.click();
+      }
+    });
+    marks.searchTriggered = Date.now() - t0;
 
     const json = await responsePromise;
     if (json && (json.code === 1 || json.data)) {
