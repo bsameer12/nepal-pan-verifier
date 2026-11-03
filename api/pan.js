@@ -92,14 +92,18 @@ export default async function handler(req, res) {
       setTimeout(() => resolve(null), 15000);
     });
 
-    // Navigate to IRD pan search with pan query parameter
-    await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 25000
-    });
+    // Navigate with waitUntil: 'commit' so in-page history.replaceState does not detach the frame
+    try {
+      await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
+        waitUntil: 'commit',
+        timeout: 25000
+      });
+    } catch (e) {
+      // Ignored: in-page history.replaceState or fast client redirects
+    }
 
-    // Wait 2.5s for page scripts, CSRF token, and reCAPTCHA to settle
-    await new Promise((r) => setTimeout(r, 2500));
+    // Wait 3.5s for page scripts, CSRF token, and reCAPTCHA to settle
+    await new Promise((r) => setTimeout(r, 3500));
 
     // Trigger tax search
     await page.evaluate((panNum) => {
