@@ -1,5 +1,9 @@
-import chromium from '@sparticuz/chromium';
+import chromium from '@sparticuz/chromium-min';
 import puppeteer from 'puppeteer-core';
+import path from 'path';
+
+const CHROMIUM_URL =
+  'https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar';
 
 export default async function handler(req, res) {
   // CORS Headers
@@ -30,10 +34,14 @@ export default async function handler(req, res) {
   let browser = null;
   try {
     chromium.setGraphicsMode = false;
+    const executablePath = await chromium.executablePath(CHROMIUM_URL);
+    const execDir = path.dirname(executablePath);
+    process.env.LD_LIBRARY_PATH = `${process.env.LD_LIBRARY_PATH || ''}:${execDir}:${execDir}/lib`;
+
     browser = await puppeteer.launch({
       args: [...chromium.args, '--hide-scrollbars', '--disable-web-security', '--no-sandbox'],
       defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
+      executablePath: executablePath,
       headless: chromium.headless
     });
 

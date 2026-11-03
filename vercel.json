@@ -3,7 +3,7 @@
   "functions": {
     "api/pan.js": {
       "memory": 1024,
-      "maxDuration": 25
+      "maxDuration": 60
     }
   },
   "routes": [
