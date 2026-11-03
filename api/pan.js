@@ -137,27 +137,36 @@ export default async function handler(req, res) {
     } catch (e) {}
     marks.pageNavigated = Date.now() - t0;
 
-    // Poll up to 2.5s for grecaptcha and taxSearch to be available, then execute
-    for (let i = 0; i < 5; i++) {
-      const isReady = await page.evaluate((panNum) => {
-        const el = document.getElementById('pan');
-        if (el) el.value = panNum;
-
-        const hasTaxSearch = typeof window.taxSearch === 'function';
-        const hasGrecaptcha =
-          typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.execute === 'function';
-
-        if (hasTaxSearch && hasGrecaptcha) {
-          window.taxSearch({ preventDefault: () => {} });
-          return true;
-        }
-        return false;
-      }, pan);
-
-      if (isReady) break;
+    // Poll up to 4s for grecaptcha and taxSearch to be available, then execute
+    let evaluateSuccess = false;
+    for (let i = 0; i < 8; i++) {
       await new Promise((r) => setTimeout(r, 500));
+      try {
+        const isReady = await page.evaluate((panNum) => {
+          const el = document.getElementById('pan');
+          if (el) el.value = panNum;
+
+          const hasTaxSearch = typeof window.taxSearch === 'function';
+          const hasGrecaptcha =
+            typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.execute === 'function';
+
+          if (hasTaxSearch && hasGrecaptcha) {
+            window.taxSearch({ preventDefault: () => {} });
+            return true;
+          }
+          return false;
+        }, pan);
+
+        if (isReady) {
+          evaluateSuccess = true;
+          break;
+        }
+      } catch (evalErr) {
+        // Absorbs transient frame detachment during in-page history.replaceState or script load
+      }
     }
     marks.evaluateTriggered = Date.now() - t0;
+    marks.evaluateSuccess = evaluateSuccess;
 
     const json = await responsePromise;
     if (json && (json.code === 1 || json.data)) {
