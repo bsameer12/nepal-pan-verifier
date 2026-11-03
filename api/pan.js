@@ -60,6 +60,9 @@ export default async function handler(req, res) {
     });
   }
 
+  const t0 = Date.now();
+  const marks = {};
+
   let page = null;
   try {
     const fs = await import('node:fs');
@@ -71,18 +74,17 @@ export default async function handler(req, res) {
 
     chromium.setGraphicsMode = false;
     const executablePath = await chromium.executablePath(CHROMIUM_URL);
+    marks.executable = Date.now() - t0;
 
     const al2023Lib = '/tmp/al2023/lib';
     if (!process.env.LD_LIBRARY_PATH || !process.env.LD_LIBRARY_PATH.includes(al2023Lib)) {
       process.env.LD_LIBRARY_PATH = [al2023Lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
     }
 
-    const cleanArgs = chromium.args.filter((arg) => arg !== '--single-process');
-
     if (!cachedBrowser || !cachedBrowser.connected) {
       cachedBrowser = await puppeteer.launch({
         args: [
-          ...cleanArgs,
+          ...chromium.args,
           '--hide-scrollbars',
           '--disable-web-security',
           '--no-sandbox',
@@ -95,6 +97,7 @@ export default async function handler(req, res) {
         headless: chromium.headless
       });
     }
+    marks.browserReady = Date.now() - t0;
 
     page = await cachedBrowser.newPage();
     await page.setUserAgent(
@@ -122,19 +125,20 @@ export default async function handler(req, res) {
           }
         } catch (e) {}
       });
-      setTimeout(() => resolve(null), 8000);
+      setTimeout(() => resolve(null), 6000);
     });
 
     // Navigate to IRD (blazing fast with blocked assets)
     try {
       await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
         waitUntil: 'domcontentloaded',
-        timeout: 10000
+        timeout: 8000
       });
     } catch (e) {}
+    marks.pageNavigated = Date.now() - t0;
 
-    // Poll up to 3s for grecaptcha and taxSearch to be available, then execute
-    for (let i = 0; i < 6; i++) {
+    // Poll up to 2.5s for grecaptcha and taxSearch to be available, then execute
+    for (let i = 0; i < 5; i++) {
       const isReady = await page.evaluate((panNum) => {
         const el = document.getElementById('pan');
         if (el) el.value = panNum;
@@ -153,6 +157,7 @@ export default async function handler(req, res) {
       if (isReady) break;
       await new Promise((r) => setTimeout(r, 500));
     }
+    marks.evaluateTriggered = Date.now() - t0;
 
     const json = await responsePromise;
     if (json && (json.code === 1 || json.data)) {
@@ -166,6 +171,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         success: true,
         pan: pan,
+        timing: marks,
         data: irdData,
         source: 'IRD Nepal Official Portal'
       });
@@ -173,6 +179,7 @@ export default async function handler(req, res) {
       return res.status(404).json({
         success: false,
         pan: pan,
+        timing: marks,
         message: 'Taxpayer record not found or unverified on IRD portal'
       });
     }
@@ -185,6 +192,7 @@ export default async function handler(req, res) {
     return res.status(500).json({
       success: false,
       pan: pan,
+      timing: marks,
       message: error.message || 'Serverless verification error'
     });
   }
