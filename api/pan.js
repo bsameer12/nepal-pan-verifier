@@ -5,6 +5,9 @@ import path from 'path';
 const CHROMIUM_URL =
   'https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar';
 
+// Force AL2023 environment detection for @sparticuz/chromium on Vercel
+process.env.AWS_EXECUTION_ENV = 'AWS_Lambda_nodejs20.x';
+
 export default async function handler(req, res) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -17,32 +20,6 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
-  }
-
-  if (req.query?.debug === '1') {
-    const fs = await import('node:fs');
-    let tmpFiles = [];
-    try {
-      tmpFiles = fs.readdirSync('/tmp');
-    } catch (e) {
-      tmpFiles = [e.message];
-    }
-    let al2023Files = [];
-    try {
-      al2023Files = fs.readdirSync('/tmp/al2023/lib');
-    } catch (e) {
-      al2023Files = [e.message];
-    }
-    return res.status(200).json({
-      tmp: tmpFiles,
-      al2023: al2023Files,
-      node: process.version,
-      env: {
-        LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH,
-        VERCEL: process.env.VERCEL,
-        AWS_EXECUTION_ENV: process.env.AWS_EXECUTION_ENV
-      }
-    });
   }
 
   // Extract PAN from query or body
@@ -59,10 +36,22 @@ export default async function handler(req, res) {
 
   let browser = null;
   try {
+    const fs = await import('node:fs');
+    // If cached /tmp/chromium exists without /tmp/al2023/lib, clean /tmp/chromium so Sparticuz unpacks all assets
+    if (fs.existsSync('/tmp/chromium') && !fs.existsSync('/tmp/al2023/lib/libnss3.so')) {
+      try {
+        fs.unlinkSync('/tmp/chromium');
+      } catch (e) {}
+    }
+
     chromium.setGraphicsMode = false;
     const executablePath = await chromium.executablePath(CHROMIUM_URL);
-    const execDir = path.dirname(executablePath);
-    process.env.LD_LIBRARY_PATH = `${process.env.LD_LIBRARY_PATH || ''}:${execDir}:${execDir}/lib`;
+
+    // Ensure LD_LIBRARY_PATH includes /tmp/al2023/lib for NSS shared objects
+    const al2023Lib = '/tmp/al2023/lib';
+    if (!process.env.LD_LIBRARY_PATH || !process.env.LD_LIBRARY_PATH.includes(al2023Lib)) {
+      process.env.LD_LIBRARY_PATH = [al2023Lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
+    }
 
     browser = await puppeteer.launch({
       args: [...chromium.args, '--hide-scrollbars', '--disable-web-security', '--no-sandbox'],
