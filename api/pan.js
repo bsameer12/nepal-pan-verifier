@@ -59,6 +59,7 @@ export default async function handler(req, res) {
         '--hide-scrollbars',
         '--disable-web-security',
         '--no-sandbox',
+        '--disable-gpu',
         '--disable-dev-shm-usage',
         '--disable-setuid-sandbox'
       ],
@@ -67,7 +68,8 @@ export default async function handler(req, res) {
       headless: chromium.headless
     });
 
-    const page = await browser.newPage();
+    const pages = await browser.pages();
+    const page = pages.length > 0 ? pages[0] : await browser.newPage();
     await page.setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
     );
@@ -87,45 +89,27 @@ export default async function handler(req, res) {
         }
       });
       // Safety timeout after form submission
-      setTimeout(() => resolve(null), 12000);
+      setTimeout(() => resolve(null), 15000);
     });
 
-    // Safe navigation with retry for transient frame shifts
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        await page.goto('https://ird.gov.np/pan-search/', {
-          waitUntil: 'domcontentloaded',
-          timeout: 25000
-        });
-        break;
-      } catch (err) {
-        if (err.message && err.message.includes('detached') && attempt < 2) {
-          await new Promise((r) => setTimeout(r, 1200));
-          continue;
-        }
-        throw err;
-      }
-    }
+    // Navigate to IRD pan search with pan query parameter
+    await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 25000
+    });
 
-    // Wait for the PAN input to be ready in DOM
-    await page.waitForSelector('#pan', { timeout: 12000 });
+    // Wait 2.5s for page scripts, CSRF token, and reCAPTCHA to settle
+    await new Promise((r) => setTimeout(r, 2500));
 
-    // Wait for Google invisible reCAPTCHA script to finish loading
-    await page
-      .waitForFunction(() => typeof window.grecaptcha !== 'undefined', { timeout: 8000 })
-      .catch(() => {});
-
-    // Populate PAN and trigger grecaptcha directly without causing native form submission
+    // Trigger tax search
     await page.evaluate((panNum) => {
       const el = document.getElementById('pan');
-      if (el) {
-        el.value = panNum;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      if (typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.execute === 'function') {
-        window.grecaptcha.execute();
-      } else if (typeof window.taxSearch === 'function') {
+      if (el) el.value = panNum;
+
+      if (typeof window.taxSearch === 'function') {
         window.taxSearch({ preventDefault: () => {} });
+      } else if (typeof window.grecaptcha !== 'undefined' && window.grecaptcha.execute) {
+        window.grecaptcha.execute();
       } else {
         const btn = document.getElementById('submit');
         if (btn) btn.click();
