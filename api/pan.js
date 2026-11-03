@@ -81,20 +81,14 @@ export default async function handler(req, res) {
       process.env.LD_LIBRARY_PATH = [al2023Lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
     }
 
-    // Filter out flags that break Cross-Origin-Opener-Policy (COOP) process isolation
-    const cleanArgs = chromium.args.filter((arg) =>
-      arg !== '--single-process' &&
-      arg !== '--no-zygote' &&
-      !arg.includes('disable-web-security')
-    );
-
     browser = await puppeteer.launch({
       args: [
-        ...cleanArgs,
+        ...chromium.args,
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-gpu',
         '--disable-dev-shm-usage',
+        '--disable-features=CrossOriginOpenerPolicy,CrossOriginEmbedderPolicy',
         '--hide-scrollbars'
       ],
       defaultViewport: chromium.defaultViewport,
