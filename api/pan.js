@@ -19,6 +19,32 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
+  if (req.query?.debug === '1') {
+    const fs = await import('node:fs');
+    let tmpFiles = [];
+    try {
+      tmpFiles = fs.readdirSync('/tmp');
+    } catch (e) {
+      tmpFiles = [e.message];
+    }
+    let al2023Files = [];
+    try {
+      al2023Files = fs.readdirSync('/tmp/al2023/lib');
+    } catch (e) {
+      al2023Files = [e.message];
+    }
+    return res.status(200).json({
+      tmp: tmpFiles,
+      al2023: al2023Files,
+      node: process.version,
+      env: {
+        LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH,
+        VERCEL: process.env.VERCEL,
+        AWS_EXECUTION_ENV: process.env.AWS_EXECUTION_ENV
+      }
+    });
+  }
+
   // Extract PAN from query or body
   const rawPan = req.query?.pan || req.body?.pan || '';
   const pan = String(rawPan).replace(/\D/g, '');
