@@ -53,9 +53,12 @@ export default async function handler(req, res) {
       process.env.LD_LIBRARY_PATH = [al2023Lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
     }
 
+    // Filter out --single-process which causes frame detachment and renderer crashes in iframes
+    const cleanArgs = chromium.args.filter((arg) => arg !== '--single-process');
+
     browser = await puppeteer.launch({
       args: [
-        ...chromium.args,
+        ...cleanArgs,
         '--hide-scrollbars',
         '--disable-web-security',
         '--no-sandbox',
