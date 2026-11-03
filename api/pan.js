@@ -102,75 +102,106 @@ export default async function handler(req, res) {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
     );
 
-    // Neutralize history.replaceState to prevent Puppeteer frame detachment
-    await page.evaluateOnNewDocument(() => {
-      try {
-        history.replaceState = () => {};
-        history.pushState = () => {};
-      } catch (e) {}
-    });
-
-    let irdData = null;
-    page.on('response', async (response) => {
-      try {
-        if (response.url().includes('/api/getPanSearch/')) {
-          const json = await response.json();
-          if (json && (json.code === 1 || json.data)) {
-            irdData = json.data || json;
-          }
-        }
-      } catch (e) {}
-    });
-
-    // Navigate to IRD pan search page
-    await page.goto(`https://ird.gov.np/pan-search/?pan=${pan}`, {
+    // Navigate to lightweight origin anchor to avoid COOP/SPA frame detachment
+    await page.goto('https://ird.gov.np/robots.txt', {
       waitUntil: 'domcontentloaded',
-      timeout: 15000
+      timeout: 10000
     });
     marks.pageNavigated = Date.now() - t0;
 
-    // Wait for the form input to be ready
-    await page.waitForSelector('#pan', { timeout: 8000 });
+    // Execute within genuine ird.gov.np origin
+    const execResult = await page.evaluate(async (panNum) => {
+      try {
+        // 1. Fetch /pan-search/ to establish real CSRF token & session cookie
+        const panPage = await fetch('/pan-search/');
+        const text = await panPage.text();
+        const match = text.match(/name="csrfmiddlewaretoken"\s+value="([^"]+)"/);
+        const csrfToken = match ? match[1] : '';
 
-    // Populate PAN value
-    await page.evaluate((panNum) => {
-      const el = document.getElementById('pan');
-      if (el) {
-        el.value = panNum;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return new Promise((resolve) => {
+          // 2. Load Google reCAPTCHA explicit script
+          const script = document.createElement('script');
+          script.src = 'https://www.google.com/recaptcha/api.js?render=explicit';
+          script.onload = () => {
+            if (typeof window.grecaptcha === 'undefined') {
+              return resolve({ success: false, error: 'grecaptcha_undefined' });
+            }
+
+            window.grecaptcha.ready(() => {
+              const container = document.createElement('div');
+              container.id = 'recaptcha-box';
+              document.body.appendChild(container);
+
+              try {
+                const widgetId = window.grecaptcha.render('recaptcha-box', {
+                  sitekey: '6LdZWZ8pAAAAAAfBIJLQaO6RNoYDSVDNfc-avUhy',
+                  size: 'invisible',
+                  callback: async (captchaToken) => {
+                    try {
+                      const fd = new FormData();
+                      fd.append('csrfmiddlewaretoken', csrfToken);
+                      fd.append('pan', panNum);
+                      fd.append('g-recaptcha-response', captchaToken);
+
+                      const postResp = await fetch('/api/getPanSearch/', {
+                        method: 'POST',
+                        headers: {
+                          'X-CSRFToken': csrfToken,
+                          'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        body: fd
+                      });
+
+                      const json = await postResp.json();
+                      resolve({ success: true, json: json });
+                    } catch (postErr) {
+                      resolve({ success: false, error: 'post_failed: ' + postErr.message });
+                    }
+                  }
+                });
+
+                window.grecaptcha.execute(widgetId);
+              } catch (renderErr) {
+                resolve({ success: false, error: 'render_failed: ' + renderErr.message });
+              }
+            });
+          };
+
+          script.onerror = () => resolve({ success: false, error: 'script_load_failed' });
+          document.head.appendChild(script);
+
+          setTimeout(() => resolve({ success: false, error: 'recaptcha_timeout' }), 10000);
+        });
+      } catch (outerErr) {
+        return { success: false, error: 'eval_failed: ' + outerErr.message };
       }
     }, pan);
 
-    // Click search button
-    await page.click('#submit');
-    marks.submitClicked = Date.now() - t0;
-
-    // Await IRD API response
-    if (!irdData) {
-      await page
-        .waitForResponse((res) => res.url().includes('/api/getPanSearch/'), { timeout: 8000 })
-        .catch(() => {});
-    }
+    marks.evaluateFinished = Date.now() - t0;
 
     await browser.close();
     browser = null;
 
-    if (irdData) {
-      return res.status(200).json({
-        success: true,
-        pan: pan,
-        timing: marks,
-        data: irdData,
-        source: 'IRD Nepal Official Portal'
-      });
-    } else {
-      return res.status(404).json({
-        success: false,
-        pan: pan,
-        timing: marks,
-        message: 'Taxpayer record not found or unverified on IRD portal'
-      });
+    if (execResult?.success && execResult?.json) {
+      const payload = execResult.json;
+      if (payload.code === 1 || payload.data) {
+        return res.status(200).json({
+          success: true,
+          pan: pan,
+          timing: marks,
+          data: payload.data || payload,
+          source: 'IRD Nepal Official Portal'
+        });
+      }
     }
+
+    return res.status(404).json({
+      success: false,
+      pan: pan,
+      timing: marks,
+      evalResult: execResult,
+      message: 'Taxpayer record not found or unverified on IRD portal'
+    });
   } catch (error) {
     if (browser) {
       try {
