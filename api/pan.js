@@ -137,37 +137,46 @@ export default async function handler(req, res) {
     } catch (e) {}
     marks.pageNavigated = Date.now() - t0;
 
-    // Wait for #pan to be ready in DOM
-    await page.waitForSelector('#pan', { timeout: 6000 }).catch(() => {});
+    // Allow in-page scripts and history.replaceState to settle
+    await new Promise((r) => setTimeout(r, 1200));
 
-    // Ensure #pan has the PAN value
-    await page.evaluate((panNum) => {
-      const el = document.getElementById('pan');
-      if (el) {
-        el.value = panNum;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    }, pan);
+    // Safely evaluate on active main frame across potential frame transitions
+    let searchSubmitted = false;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        const frame = page.mainFrame();
+        if (frame && !frame.isDetached()) {
+          searchSubmitted = await frame.evaluate((panNum) => {
+            const el = document.getElementById('pan');
+            if (!el) return false;
+            el.value = panNum;
 
-    // Trigger tax search via grecaptcha.ready or direct submit click
-    await page.evaluate(() => {
-      if (typeof window.grecaptcha !== 'undefined' && typeof window.grecaptcha.ready === 'function') {
-        window.grecaptcha.ready(() => {
-          if (typeof window.taxSearch === 'function') {
-            window.taxSearch({ preventDefault: () => {} });
-          } else if (typeof window.grecaptcha.execute === 'function') {
-            window.grecaptcha.execute();
-          } else {
-            document.getElementById('submit')?.click();
-          }
-        });
-      } else if (typeof window.taxSearch === 'function') {
-        window.taxSearch({ preventDefault: () => {} });
-      } else {
-        document.getElementById('submit')?.click();
+            if (typeof window.grecaptcha !== 'undefined') {
+              if (typeof window.taxSearch === 'function') {
+                window.taxSearch({ preventDefault: () => {} });
+                return true;
+              } else if (typeof window.grecaptcha.execute === 'function') {
+                window.grecaptcha.execute();
+                return true;
+              }
+            }
+            const btn = document.getElementById('submit');
+            if (btn) {
+              btn.click();
+              return true;
+            }
+            return false;
+          }, pan);
+
+          if (searchSubmitted) break;
+        }
+      } catch (frameErr) {
+        // Absorbs transient frame detachment during initial execution
       }
-    });
+      await new Promise((r) => setTimeout(r, 600));
+    }
     marks.searchTriggered = Date.now() - t0;
+    marks.searchSubmitted = searchSubmitted;
 
     const json = await responsePromise;
     if (json && (json.code === 1 || json.data)) {
