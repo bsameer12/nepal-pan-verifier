@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "functions": {
+    "api/pan.js": {
+      "memory": 1024,
+      "maxDuration": 25
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/pan",
+      "dest": "api/pan.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "api/pan.js"
+    }
+  ]
+}

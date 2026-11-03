@@ -1,0 +1,26 @@
+{
+  "name": "nepal-pan-verifier",
+  "version": "1.0.0",
+  "description": "Serverless API to verify Nepalese PAN details directly from IRD Nepal (ird.gov.np)",
+  "main": "api/pan.js",
+  "type": "module",
+  "scripts": {
+    "start": "node api/pan.js"
+  },
+  "dependencies": {
+    "@sparticuz/chromium-min": "123.0.1",
+    "puppeteer-core": "22.6.0"
+  },
+  "keywords": [
+    "nepal",
+    "ird",
+    "pan",
+    "taxpayer",
+    "vat",
+    "tax-clearance",
+    "serverless",
+    "vercel"
+  ],
+  "author": "AforAudit Platform",
+  "license": "MIT"
+}
